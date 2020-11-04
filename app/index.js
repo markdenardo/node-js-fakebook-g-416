@@ -1,3 +1,5 @@
+"use strict";
+
 const _ = require('lodash');
 const path = require('path');
 const bodyParser = require('body-parser');
@@ -17,7 +19,7 @@ const db = knex(config[ENV]);
 
 // Initialize Express.
 const app = express();
-app.use(bodyParser.urlencoded({extended: false}));
+app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 app.use(session({ secret: 'some secret' }));
 app.use(flash());
@@ -63,14 +65,16 @@ passport.use(new LocalStrategy((username, password, done) => {
     });
 }));
 
-passport.serializeUser(function(user, done) {
+passport.serializeUser(function (user, done) {
   done(null, user.id);
 });
 
-passport.deserializeUser(function(user, done) {
+passport.deserializeUser(function (user, done) {
   User
-    .forge({id: user})
-    .fetch()
+    .forge({ id: user })
+    .fetch({
+      withRelated: ['followers', 'following']
+    })
     .then((usr) => {
       done(null, usr);
     })
@@ -88,9 +92,9 @@ const isAuthenticated = (req, res, done) => {
 
 // ***** Server ***** //
 
-app.get('/user/:id', isAuthenticated, (req,res) => {
+app.get('/user/:id', isAuthenticated, (req, res) => {
   User
-    .forge({id: req.params.id})
+    .forge({ id: req.params.id })
     .fetch()
     .then((usr) => {
       if (_.isEmpty(usr))
@@ -110,7 +114,7 @@ app.post('/user', (req, res) => {
     .forge(req.body)
     .save()
     .then((usr) => {
-      res.send({id: usr.id});
+      res.send({ id: usr.id });
     })
     .catch((error) => {
       console.error(error);
@@ -130,10 +134,10 @@ app.get('/posts', isAuthenticated, (req, res) => {
     });
 });
 
-app.get('/post/:id', isAuthenticated, (req,res) => {
+app.get('/post/:id', isAuthenticated, (req, res) => {
   Post
-    .forge({id: req.params.id})
-    .fetch({withRelated: ['author', 'comments']})
+    .forge({ id: req.params.id })
+    .fetch({ withRelated: ['author', 'comments'] })
     .then((post) => {
       if (_.isEmpty(post))
         return res.sendStatus(404);
@@ -146,13 +150,13 @@ app.get('/post/:id', isAuthenticated, (req,res) => {
 });
 
 app.post('/post', isAuthenticated, (req, res) => {
-  if(_.isEmpty(req.body))
+  if (_.isEmpty(req.body))
     return res.sendStatus(400);
   Post
     .forge(req.body)
     .save()
     .then((post) => {
-      res.send({id: post.id});
+      res.send({ id: post.id });
     })
     .catch((error) => {
       console.error(error);
@@ -167,7 +171,67 @@ app.post('/comment', isAuthenticated, (req, res) => {
     .forge(req.body)
     .save()
     .then((comment) => {
-      res.send({id: comment.id});
+      res.send({ id: comment.id });
+    })
+    .catch((error) => {
+      console.error(error);
+      res.sendStatus(500);
+    });
+});
+
+app.get('/follow/:id', isAuthenticated, (req, res) => {
+  if (_.isEmpty(req.params))
+    return res.sendStatus(400);
+  let currUserId = req.user.id;
+  let userToFollowId = req.params.id;
+  User
+    .forge({ id: userToFollowId })
+    .fetch()
+    .then((usr) => {
+      if (!usr)
+        return res.sendStatus(400);
+      return User.forge({ id: currUserId }).following().attach([usr]);
+    })
+    .then((usr) => {
+      res.send(_.pluck(usr.models, 'id'));
+    })
+    .catch((error) => {
+      console.error(error);
+      res.sendStatus(500);
+    });
+});
+
+app.get('/unfollow/:id', isAuthenticated, (req, res) => {
+  if (_.isEmpty(req.params))
+    return res.sendStatus(400);
+  let currUserId = req.user.id;
+  let userToUnfollowId = req.params.id;
+  User
+    .forge({ id: currUserId })
+    .following()
+    .detach([userToUnfollowId])
+    .then((following) => {
+      res.end();
+    })
+    .catch((error) => {
+      console.error(error);
+      res.sendStatus(500);
+    });
+});
+
+app.get('/', isAuthenticated, (req, res) => {
+  const followedIds = _.pluck(req.user.related('following').models, 'id');
+  let queryObj = {};
+  followedIds.forEach((id, idx) => {
+    queryObj[(idx === 0) ? 'where' : 'orWhere'] = { 'author': id };
+  });
+  Post
+    .query(queryObj)
+    .orderBy('-created_at')
+    .fetchAll({ withRelated: ['author'] })
+    .then((results) => {
+      // if(results) console.log(_.map(results.models, v => { return JSON.stringify(v); }));
+      res.send(results);
     })
     .catch((error) => {
       console.error(error);
@@ -184,7 +248,7 @@ app.post('/login',
     failureRedirect: '/login',
     failureFlash: true
   }),
-  function(req, res) {
+  function (req, res) {
     res.redirect('/posts');
   });
 
